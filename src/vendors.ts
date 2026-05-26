@@ -32,7 +32,7 @@ export const VENDOR_PRESETS = {
   },
   grok: {
     baseURL: 'https://api.x.ai/v1',
-    defaultModel: 'grok-2-latest',
+    defaultModel: 'grok-4-latest',
     envKeyName: 'XAI_API_KEY',
     docs: 'https://docs.x.ai/',
   },
