@@ -2,6 +2,15 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { VENDOR_NAMES, type VendorName } from './vendors.js';
+import { parseSenderList } from './reply-limiter.js';
+import { serviceUrlProblem } from './url-safety.js';
+
+// Integer from the environment. A blank value ("VAR=") means "use the default".
+const intEnv = (def: number, min: number, max: number) =>
+  z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(min).max(max).default(def),
+  );
 
 const vendorEnum = z.enum(VENDOR_NAMES as unknown as [VendorName, ...VendorName[]]);
 
@@ -15,7 +24,18 @@ const EnvSchema = z
         'LLM_API_KEY is required (set LLM_API_KEY, e.g. your Qwen DashScope key when LLM_VENDOR=qwen)',
       ),
     LLM_MODEL: z.string().default(''),
-    LLM_BASE_URL: z.string().default(''),
+    // The API key and every room transcript are sent here, so an override must
+    // be https (plain http only to this machine, e.g. a local Ollama).
+    LLM_BASE_URL: z
+      .string()
+      .default('')
+      .superRefine((u, ctx) => {
+        if (u.length === 0) return;
+        const problem = serviceUrlProblem(u);
+        if (problem !== null) {
+          ctx.addIssue({ code: 'custom', message: `LLM_BASE_URL ${problem}` });
+        }
+      }),
     AGENTMEET_BEARER_TOKEN: z.string().default(''),
     AGENTMEET_PROVISIONING_TOKEN: z.string().default(''),
     AGENTMEET_API_BASE: z
@@ -43,6 +63,12 @@ const EnvSchema = z
       .default('llm'),
     AGENT_NAME: z.string().min(1).max(128).default('LLM'),
     PERSONA_FILE: z.string().default('./personas/skeptic.txt'),
+    // Reply limits (see src/reply-limiter.ts). Defaults are meant to stay out of
+    // the way of a normal conversation while bounding loops and spend.
+    REPLY_MAX_PER_WINDOW: intEnv(20, 1, 10_000),
+    REPLY_WINDOW_SECONDS: intEnv(600, 1, 86_400),
+    REPLY_MAX_AGENT_STREAK: intEnv(3, 0, 10_000),
+    REPLY_ALLOWED_SENDERS: z.string().default('').transform(parseSenderList),
     LOG_LEVEL: z.string().default('info'),
   })
   .refine((v) => v.AGENTMEET_BEARER_TOKEN.length > 0 || v.AGENTMEET_PROVISIONING_TOKEN.length > 0, {
